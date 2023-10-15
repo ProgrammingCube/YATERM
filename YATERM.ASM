@@ -1,386 +1,221 @@
-; YATERM V7
-; Patrick Jackson
-; Simple terminal for CP/M-80 machines
+BDOS	equ 5
+PRINTL	equ 9
+READL	equ 10
+OPENF	equ 15
+READF	equ 20
+IBUFLEN equ 100
+CR	equ 0Ah
+LF	equ 0Dh
+MSCNT	equ 132
+BUFF	equ 80h
+FCB	equ 5Ch
+TTYBASE equ 10h
+TTYIO	equ TTYBASE + 1
+CRTBASE equ 12h
+CRTIO	equ CRTBASE + 1
 
-TRUE	equ	0FFFFH
-FALSE	equ	NOT	TRUE
+ESC	equ 27
 
-; To use on your machine, change
-ZILOG	equ	FALSE
-TTYBASE equ	10h
-CRTBASE equ	12h
-TTYIO	equ	TTYBASE + 1
-CRTIO	equ	CRTBASE + 1
-CP437	equ	FALSE
-; to your respective CPU, ports, codepage and
-; assemble with your native CP/M assembler.
-
-; CP/M BDOS routines
-BDOS	equ	5
-PRINT	equ	9
-READ	equ	10
-OPENF	equ	15
-READF	equ	20
-
-; CP/M arg and file control block
-BUFF	equ	80h
-FCB	equ	5Ch
-FCBFN	equ	FCB+1
-FCBFT	equ	FCB+9
-FCBCR	equ	FCB+32
-
-; char definitions
-CR	equ	0Ah
-LF	equ	0Dh
-ESC	equ	27
-EOL	set	'$'					; CP/M EOL
-EOF	equ	1Ah					; CP/M EOF
-
-; Machine delay ~ 2MHz system
-MSCNT	equ	132
-
-; stdin buffer
-STDINSZ equ	32
-
-; keys
-CTRLO	equ	15
-KEYS	equ	'S'
-KEYR	equ	'R'
-KEYO	equ	'O'
-KEYE	equ	'E'
-KEYQ	equ	'Q'
-
-; menu characters
-	IF	CP437
-ULCORNR	equ	201
-URCORNR	equ	187
-LLCORNR	equ	200
-LRCORNR	equ	188
-VERTCHR	equ	186
-HORZCHR	equ	205
-LHSIDE	equ	204
-RHSIDE	equ	185
-	ENDIF
-	IF	NOT	CP437
-ULCORNR	equ	'+'
-URCORNR	equ	'+'
-LLCORNR	equ	'+'
-LRCORNR	equ	'+'
-VERTCHR	equ	'|'
-HORZCHR	equ	'-'
-LHSIDE	equ	'+'
-RHSIDE	equ	'+'
-	ENDIF
+FCBFN	equ FCB+1
+FCBFT	equ FCB+9
+FCBCR	equ FCB+32
 
 	org	100h
+				; set up local stack
+start	lxi	h,0		; zero out HL
+	dad	sp		; set HL to CCP SP
+	shld	OLDSP		; store SP to OLDSP
+	lxi	sp,STKTOP	; load local sp to sp reg
+				; copy arguments to local area
+	lxi	h,BUFF		; set hl to BUFF address
+	mov	c,m		; prep for memcpy
+				; now ready for memcpy
+				; BC is number of bytes to copy
+	lxi	d,BUFF		; DE is source address
+	lxi	h,args		; HL is target address
+	call	memcpy		; call memcpy subroutine
 
-; -------------------SETUP---------------------
+	call	clrscr		; clear screen
 
-start	lxi	h,0		; set up local stack
-	dad	sp
-	shld	OLDSP
-	lxi	sp,STKTOP	; load new stack ptr
+	lxi	d,welcome	; load DE with welcome address
+	call	printf		; call print routine
 
-	lxi	h,BUFF		; copy args to ARGS
-	mvi	c,m
-	lxi	d,BUFF
-	lxi	h,ARGS
-	call	memcpy
+
+loop	in	TTYBASE		; Check for byte on TTY port
+	rrc			; Rotate through carry
+	jc	tty		; Jump to TTY
+
+	in	CRTBASE		; Check for bye on CRT port
+	rrc			; Rotate through carry
+	jc	crt		; Jump to CRT
+	jmp	loop
+
+tty	in	TTYIO		; Grab incoming TTY byte
+	call	ttycheck	; call ttycheck routine
+	out	CRTIO		; Push byte out CRT port
+	jmp	loop
+
+crt	in	CRTIO		; Grab incoming CRT byte
+	out	TTYIO		; Push byte out TTY port
+	jmp	loop
+
+ttycheck
+	cpi	15		; Check for Ctrl-O
+	jz	mmenu		; If Zero is SET, jump to menu
+	ret
+
+sfile	call	newline		; Call newline subroutine
+	lxi	d,sfltxt	; Load DE with sfltxt address
+	mvi	c,PRINTL	; Set up writeline BDOS call
+	call	BDOS		; Call BDOS subroutine
+	call	rdinbuf		; Call rdinbuf subroutine
+
+	call	initfcb		; call initfcb routine
+	call	cpyfcb		; call copyfcb routine
+	call	openfcb		; call openfcb routine
+
+	call	newline		; Call newline subroutine
+	jmp	loop		; Jump back loop
+
+rfile	call	newline		; Call newline subroutine
+	lxi	d,rfltxt	; Load DE with rfltxt address
+	call	printf
+	call	rdinbuf		; Call rdinbuf subroutine
+	call	newline		; Call newline subroutine
+	jmp	loop		; Jump back loop
+
+rdinbuf lxi	d,inbuf		; Set DE to inbuf address
+	mvi	a,IBUFLEN	; store IBUFLEN to Accumulator
+	stax	d		; Set first byte of inbuf to IBUFLEN
+	call	readline	; call readline
+
+	lxi	h,inbuf+1	; Set (hl) to start of inbuf string
+	call	setendch	; call setendch subroutine
+	ret			; Return from subroutine
+
+newline lxi	d,nline		; Load DE to nline address
+	call	printf
+	ret			; Return from subroutine
+
+exit	lhld	OLDSP		; load OLDSP to HL
+	SPHL			; Load HL to SP
+	ret			; Return to CP/M
+
+initfcb lxi	h,FCB		; load FCB address to HL
+	mvi	a,0		; set byte to set to 0
+	mvi	c,36		; set copy length to 36
+	call	memset		; call memset routine
 	
-	lxi	d,STRBUF	; set up input buffer
-	mvi	a,STDINSZ
-	stax	d
+	; memset FCBFN+FCBFT to ' '
+	mvi	a,' '		; load ' ' into accumulator
+	mvi	c,8+3		; load 11 into the counter
+	lxi	h,FCBFN		; load FCBFN address to HL
+	call	memset		; call memset routine
+	ret
+
+cpyfcb	lda	inbuf+1		; find number of bytes typed in filename
+	cpi	0		; check if empty
+	cz	clrscr		; call clrscr routine
+	jz	opennok		; if empty, error out
+	cpi	8+1+3		; compare against largest filename size
+	jz	fchkcnt		; Jump to GOOD if Acc == '9'
+	jnc	flnerr		; Jump to ERR if Acc > '9'
+	; continue
+fchkcnt ; set end char '$'
+	lxi	h,inbuf+1	; Set (HL) to char num of inbuf string
+	call	setendch	; call setendch
+
+	; copy filename
+	lxi	h,inbuf+2	; load (HL) with first byte of filename
+	lxi	d,FCBFN		; load DE with FDBFN address
+fnloop	mov	a,m		; move M to A
+	cpi	'.'		; compare against '.'
+	jz	copyext		; if so, copy the extension
+	cpi	'a' - 1		; see if lowercase
+	jc	notlow		; if not so, pass through
+	ani	11011111b	; convert A to uppercase
+notlow	stax	d		; store A to DE address
+	inx	h		; increment TEMPBUF address
+	inx	d		; increment inbuf address
+	jmp	fnloop
+
+	; copy extension
+copyext inx	h		; increment HL past the '.'
+	lxi	d,FCBFT		; load FCBFT address to DE
+extloop mov	a,m		; move M to A
+	cpi	'$'		; check if end of line
+	rz			; return if so (done)
+	cpi	'a' - 1		; check A if uppercase
+	jc	notlowe		; if not so, pass through
+	ani	11011111b	; convert A to uppercase
+notlowe stax	d		; store A to DE address
+	inx	h		; increment TEMPBUF address
+	inx	d		; increment inbuf address
+	jmp	extloop
+
+openfcb call	open		; call open routine
+	cpi	255		; check if returned 255
+	jnz	openokl		; if not so, open worked
+	jmp	opennokl	; jump to open error
+
+openokl call	newline		; print newline
+	call	openok		; call openok routine
+	ret
+
+opennokl
+	call	newline		; print newline
+	call	opennok		; call opennok routine
+	ret
 	
-	call	clrscrn		; clear screen
-
-	lxi	d,welcmtxt	; print welcome text
-	call	puts
-
-; --------------MAIN PROGRAM-------------------
-
-mainloop
-	lda	STATE		; get state of program
-	; pseudo-case table
-	cpi	0		; get I/O bytes
-	push	psw
-	cz	getio
-	pop	psw
-
-	cpi	1		; main menu entered
-	push	psw
-	cz	mainmenu
-	pop	psw
-
-	cpi	2		; exit to CP/M
-	jz	exit
-
-	; end of case table
-mainbreak
-	jmp	mainloop	; loop
-
-; -------------------EXIT----------------------
-
-exit	lhld	OLDSP		; restore old sp
-	SPHL
-	ret			; return to CP/M
-
-; --------------YATERM MAIN MENU---------------
-
-; mainmenu
-; Sets menu width and height and (ultimately) X/Y screen position
-
-mainmenu
-	lxi	d,mmenutxt				; this will ultimately be the
-	call	clrscrn					; only thing you need to render
-	call	drawmenu				; a menu
-	call	getchar
-	call	mmenuprs
+flnerr	lxi	d,flnerrmsg	; load flnerrmsg address to DE
+	call	printf		; call printf routine
+	call	newline		; print newline
 	ret
 
-; -------------YATERM MENU ROUTINES------------
-
-; drawmenu
-; Dynamically draws menus
-
-drawmenu
-	push	b
-	
-	call	getmdim
-	shld	MENUWH
-
-	call	shlbc					; first line draw
-	mvi	a,ULCORNR
-	call	putchar
-drwfl	mvi	a,HORZCHR
-	call	putchar
-	dcr	c
-	jnz	drwfl
-	mvi	a,URCORNR
-	call	putchar
-	call	newline
-
-horztxt	lda	MENUWH					; draw text line
-	mov	c,a
-	mvi	a,VERTCHR
-	call	putchar	
-	call	puts
-
-	lhld	MENUWH
-	mvi	h,0
-	inx	d
-	dad	d
-	mov	e,l
-	mov	d,h
-
-	mvi	a,VERTCHR
-	call	putchar
-	call	newline
-
-	dcr	b					; check if last line
-	jz	lastline
-
-	lda	MENUWH					; draw horizontal separator
-	mov	c,a
-	mvi	a,LHSIDE
-	call	putchar
-drawhorz
-	mvi	a,HORZCHR
-	call	putchar
-	dcr	c
-	jnz	drawhorz
-	mvi	a,RHSIDE
-	call	putchar
-	call	newline
-	jmp	horztxt
-
-lastline
-	lhld	MENUWH					; last line draw
-	call	shlbc
-	mvi	a,LLCORNR
-	call	putchar
-drwll	mvi	a,HORZCHR
-	call	putchar
-	dcr	c
-	jnz	drwll
-	mvi	a,LRCORNR
-	call	putchar
-	call	newline
-
-	pop	b
+open	xra	a		; set A to zero
+	sta	FCBCR		; store A to FCBCR location
+	lxi	d,FCB		; load DE with FCB address
+	mvi	c,OPENF		; Prepare for BDOS call
+	call	BDOS		; call BDOS routine
 	ret
 
-; getmdim
-
-; Gets menu dimensions
-; Stores height in H and width in L
-
-getmdim
-	lxi	h,0
-	ldax	d					; get height
-	mov	h,a
-	call	calcmwdt				; get width
+openok	call	newline		; print newline
+	call	sendfile	; call sendfile routine
 	ret
 
-; calcmwdt
-; Calcuates menu width given menu structure at DE
-; Puts length in L
-
-calcmwdt
-	inx	d
-	mvi	l,0
-	push	d
-clcl	ldax	d
-	cpi	EOL
-	jz	clend
-	inr	l
-	inx	d
-	jmp	clcl
-clend	pop	d
+opennok call	newline		; print newline
+	lxi	d,opennokmsg	; set DE to opennokmsg address
+	call	printf		; call print routine
 	ret
-
-; mmenuprs
-; Parses input from main menu as uppercase
-
-mmenuprs
-	ani	11011111b
-	cpi	'Q'
-	cz	STATE2
-	cpi	'S'
-	push	psw
-	cz	sendfile
-	pop	psw
-	call	getchar
-	rz
-	cpi	'E'
-	jnz	mmnuprsn
-	call	clrscrn
-	call	STATE0
-mmnuprsn
-	ret
-
-; ------------YATERM FILE ROUTINES-------------
-
-; sendfile
-; Reads input string and attempts to open and send
-; file out CRTIO with character and line delay
 
 sendfile
-	call	newline
-	lxi	d,sfiletxt
-	call	puts
-	lxi	d,STRBUF
-	call	gets
-	lxi	h,STRBUF
-	call	setendch
-
-	call	initfcb
-	call	copyfcb
-	call	openfcb
-
-	cpi	255		; check if opened correctly
-	push	psw
-	cz	openntok	; if failed, show error then exit out
-	pop	psw
-	rz
+freadl	lxi	d,FCB		; load FCB address to DE
+	mvi	c,READF		; set up BDOS call
+	call	BDOS		; call BDOS routine
+	cpi	0		; check return code
+	jnz	freaderr	; if not zero, error
 	
-	call	openok		; if successful, go here
-	call	printdbg
-	ret
-
-	call	sendfcb		; send file over serial
-
-	ret
-
-; initfcb
-; Initializes FCB (File Command Block) space to prep for opening files
-
-initfcb	push	h
-	push	b
-	push	d
-	lxi	h,FCB
-	xra	a
-	mvi	c,36
-	call	memset
-	mvi	a,' '
-	mvi	c,8+3
-	lxi	h,FCBFN
-	call	memset
-	pop	d
-	pop	b
-	pop	h
-	ret
-
-; copyfcb
-; Copies filename in STRBUF to FCBFN and FCBFT
-; Any unused spaces of FCBFN and FCBFT are filled with ' 's
-
-copyfcb	lda	STRBUF+1				; get num bytes
-	cpi	0					; check if empty
-	rz						; return 0 if empty
-	cpi	8+1+3+1					; compare against max filename len
-	rz						; return 0 if true
-
-	lxi	h,STRBUF+2				; get first char of STRBUF
-	lxi	d,FCBFN					; get first char of FCBFN
-fnloop	mov	a,m					; grab STRBUF char
-	cpi	'.'					; see if '.'
-	jz	copyext					; start copying extension
-	ani	11011111b				; convert to uppercase
-	stax	d					; store to FCBFN+inc
-	inx	h					; increment STRBUF ptr
-	inx	d					; increment FCBFN ptr
-	jmp	fnloop					; loop
-
-copyext	inx	h					; skip over '.'
-	lxi	d,FCBFT					; get first char of FCBFT
-extloop	mov	a,m					; get char at STRBUF
-	cpi	EOL					; see if EOL char
-	rz						; if so, done!
-	ani	11011111b				; convert to uppercase
-	stax	d					; store FCBFT+inc
-	inx	h					; increment STRBUF ptr
-	inx	d					; increment FCBFT ptr
-	jmp	extloop					; loop
-
-; openfcb
-; Opens file in FCB
-
-openfcb	call	open
-	ret
-
-; sendfcb
-; Sends file opened with openfcb
-; Sends as normal text, no encoding
-
-sendfcb	
-freadl	lxi	d,FCB
-	mvi	c,READF
-	cpi	0
-	push	psw
-	cnz	freaderr
-	pop	psw
-	rnz
-	mvi	c,128
-	lxi	h,BUFF
-breadl	mov	a,m
-	mov	b,a
-	cpi	1Ah
-	rz
-	call	sendbyte
-	inx	h
-	dcr	c
-	jz	freadl
+	mvi	c,128		; set C to 128 (counter)
+	lxi	h,BUFF		; set HL to BUFF address
+breadl	mov	a,m		; move M to A
+	mov	b,a		; back up byte
+	cpi	1Ah		; check if EOF byte
+	rz			; if so, done
+	call	sendbyte	; call sendbyte routine
+	inx	h		; increment BUFF address
+	dcr	c		; decrement coutner
+	jz	freadl		; if zero, read next record
 	jmp	breadl
 
 sendbyte
-	mov	a,b
-	out	CRTIO
-	cpi	CR
+	mov	a,b		; restore byte
+	out	CRTIO		; send byte out CRTIO port
+	cpi	CR		; check if byte was carriage return
 	jz	crdelay		; if so, jump to carriage return routine
-	lda	delayms		; set A to 20ms
+	lda	delays		; set A to 20ms
 	call	delay		; call delay routine
 	jmp	rbytel		; pass through
-crdelay	lda	delayms+1	; set A to 50ms
+crdelay	lda	delays+1	; set A to 50ms
 	call	delay		; call delay
 
 rbytel	in	CRTBASE		; Check for byte on TTY port
@@ -400,307 +235,168 @@ dly1	dcr	b		; decrement B
 	dcr	a		; decrement A
 	jnz	delay		; loop until zero
 	ret                     ; return from subroutine
-	
 
-; openok
-; Called if opening FCB succeeded
-
-openok	call	newline
-	push	d
-	lxi	d,fileok
-	call	BDOS
-	pop	d
-	;call	getchar
+setendch			; requires hl to be buffer+1
+	mvi	d,0		; Reset d to 0
+	mov	e,m		; de = length of read (d = 0, e = l)
+	dad	d		; Add DE to HL (add IBUFLEN to inbuf
+				; start)
+	inx	h		; Increment to end of inbuf
+	mvi	a,'$'		; String terminator
+	mov	m,a		; Append string terminator
 	ret
 
-; openntok
-; Called if opening FCB failed
+mmenu
+	call	drawmmenu	; call drawmenu routine
+mmgetc	call	getc		; call getc routine
+	cpi	's'
+	jz	sfile		; go to sendfile
+	cpi	'r'
+	jz	rfile		; go to receivefile
+	cpi	'o'
+	jz	moptions
+	cpi     'e'             ; Option e
+	cz	clrscr
+	rz
+	cpi	'q'		; Option q
+	cz	clrscr		; call clrscr
+	jz	exit		; If option q, exit to CP/M
+	jmp	mmgetc
 
-openntok
-	call	newline
-	push	d
-	lxi	d,ffopntxt
-	call	BDOS
-	pop	d
-	;call	getchar
+moptions
+	call	drawomenu
+omgetc	call	getc
+	; parse
+	cpi     'e'             ; Option e
+	cz	retMmenu	; return to main menu
+	;cpi	'c'		; Option c
+	;cz	charedit
+	;cpi	'l'		; Option l
+	;cz	lineedit
+	jmp	omgetc		; jump in loop
+
+drawmmenu
+	call	clrscr		; call clrscr routine
+	lxi	d,menumsg	; load menumsg address to DE
+	call	printf		; call printf routine
+	ret			; return from subroutine
+
+drawomenu
+	call	clrscr		; call clrscr routine
+	lxi	d,omenumsg	; load omenumsg address to DE
+	call	printf		; call printf routine
+	ret			; return from subroutine
+
+retMmenu
+	call	clrscr		; call clrscr
+	;rz
+	pop	h		; pop out last memory location
+	jmp	mmenu		; return to main menu
+
+readline
+	mvi	c,READL		; Set up readline BDOS call
+	call	BDOS		; Call BDOS routine
 	ret
 
-; setendch
-; Sets end character of string at (HL) to EOL char
-; Appends
+gloop	call	clrscr		; call clrscr routine
+	lxi	sp,STKTOP	; Reset the stack (prevent overflow)
+	jmp	loop		; Go back to main loop
 
-setendch
-	push	d
-	push	h
-	inx	d
-	mvi	d,0
-	mov	e,m
-	dad	d
-	inx	h
-	mvi	m,'$'
-	pop	h
-	pop	d
-	ret
+sendcr	mvi	a,CR		; move CR to A
+	out	CRTIO		; send CR out CRTIO
+	ret			; return from subroutine
 
-; open
-; Opens FCB and loads FCB with contents if initialized correctly
+clrscr	lxi	d,clrmsg	; load clrmsg address to DE
+	call	printf		; call print routine'
+	ret                     ; return from subroutine
 
-open	xra	a
-	sta	FCBCR
-	push	b
-	push	d
-	lxi	d,FCB
-	mvi	c,OPENF
-	call	BDOS
-	pop	d
-	pop	b
-	ret
+printf	mvi	c,PRINTL	; set up BDOS call
+	call	BDOS		; call BDOS routine
+	ret			; return from subroutine
 
-; ------------YATERM I/O ROUTINES--------------
+getc	mvi	b,0
+	mvi	c,1		; move 1 to BC
+	call	BDOS		; call BDOS routine
+	ret			; return from subroutine
 
-; getio
-; Determines if I/O byte is ready on SIO/2 card
+memcpy	mov	a,b		; memcpy subroutine (copied from wikipedia)
+	ora	c		; compare low BC byte to high BC byte
+	rz			; if zero, return
+mcloop	ldax	d		; load first source byte to A
+	mov	m,a		; store byte to target address
+	inx	d		; increment source address
+	inx	h		; increment target address
+	dcx	b		; decrement byte counter
+	mov	a,b		; prep compare
+	ora	c		; compare low BC byte to high BC byte
+	jnz	mcloop		; if not zero, continue memcpy loop
+	ret			; return from subroutine
 
-getio	in	TTYBASE
-	rrc
-	cc	ttyin
-	in	CRTBASE
-	rrc
-	cc	crtin
-	ret
-
-; ttyin
-; Pulls in byte from TTYIO and outputs to CRTIO
-; Returns byte to A
-
-ttyin	in	TTYIO
-	out	CRTIO
-	call	ttypars
-	ret
-
-; ttyparse
-; Parses the incoming TTYIO byte in A
-
-ttypars	cpi	CTRLO
-	cz	STATE1
-	ret
-
-; crtin
-; Pulls in byte from CRTIO and outputs to TTYIO
-; Returns byte to A
-
-crtin	in	CRTIO
-	out	TTYIO
-	ret
-
-; crtparse
-
-; clrscrn
-; Clears screen using VT100 Esc[2JEsc[H
-
-clrscrn	push	d
-	lxi	d,vt100clr
-	call	puts
-	pop	d
-	ret
-
-; ------------STATE MACHINE CHECK--------------
-
-; STATE0
-; Sets state machine to 0
-
-STATE0	xra	a
-	sta	STATE
-	ret
-
-; STATE1
-; Sets state machine to 1
-
-STATE1	mvi	a,1
-	sta	STATE
-	ret
-
-; STATE2
-; Sets state machine to 2
-
-STATE2	mvi	a,2
-	sta	STATE
-	ret
-
-; -----------------DEBUG/QOL-------------------
-
-; printdbg
-; Prints out a debug message
-
-printdbg
-	push	d
-	lxi	d,debugtxt
-	call	puts
-	pop	d
-	ret
-
-; shlbc
-; Stores H->B L->C
-
-shlbc	mov	c,l
-	mov	b,h
-	ret
-
-; newline
-; Prints a newline (CR/LF)
-
-newline	push	d
-	lxi	d,nltxt
-	call	puts
-	pop	d
-	ret
-
-; --------------C-LIKE ROUTINES----------------
-
-; puts()
-; Prints string to stdout
-; Does NOT produce newline like stdlib.c
-
-puts	push	d
-	push	b
-	mvi	c,PRINT
-	call	BDOS
-	pop	b
-	pop	d
-	ret
-
-; gets()
-; Gets string from stdin and copies it to STRBUF
-; Max STDINSZ chars
-
-gets	push	d
-	push	b
-	mvi	c,READ
-	call	BDOS
-	pop	b
-	pop	d
-	ret
-
-; getchar()
-; Follows C getchar() on stdin
-; Does NOT return int, returns uint8_t to A
-
-getchar	push	b
-	mvi	c,1
-	call	BDOS
-	pop	b
-	ret
-
-; putchar()
-; Follows C putchar() on stdout
-; Does not return char pushed to int
-
-putchar	push	b
-	push	d
-	mvi	c,2
-	mov	e,a
-	call	BDOS
-	pop	d
-	pop	b
-	ret
-
-; memcpy(dest, src, len)
-; Follows string.h
-; dest      : (HL)
-; src       : (DE)
-; len       :  BC
-; Returns pointer to dest (HL)
- 
-memcpy  push    h		; preserve (HL) to stack
-	mov 	a,b     	; prep BC to see if BC == 0
-	ora 	c       	; check if BC == 0
-	jz	memcpy+16	; isz then end
-	ldax    d       	; load (DE) to A
-	mov 	m,a     	; store A to (HL)
-	inx 	d       	; increment (DE)
-	inx 	h       	; increment (HL)
-	dcx 	b       	; decrement BC
-	mov 	a,b     	; prep BC to see if BC == 0
-	ora 	c       	; check if BC == 0
-	jnz 	memcpy+6	; loop if BC > 0
-	pop 	h       	; return (HL)
-	ret
-
-; memset(dest, byte, len)
-; 256 max memset
-; dest		: (HL)
-; byte		: A
-; len		: C
-; Returns pointer to dest (HL)
-
-memset	push	h
-	push	b
-	mov	m,a		; load accumulator into hl location
+memset	mov	m,a		; load accumulator into hl location
 	inx	h		; increment hl
 	dcr	c		; decrement counter
 	jnz	memset		; if not zero, loop
-	pop	b
-	pop	h
 	ret                     ; return from subroutine
 
-; -------------STRING CONSTANTS----------------
-
-welcmtxt
-	db	'YATERM 2.0',CR,LF,'Patrick Jackson'
-	db	CR,LF,'Ctrl-O for Menu',CR,LF,EOL
-
-sfiletxt
-	db	'File to send: ',EOL
-
-rfiletxt
-	db	'File to receive: ',EOL
-
-fileok
-	db	'File found!',EOL
-
-ffopntxt
-	db	'File not found!',EOL
-
-nltxt	db	CR,LF,EOL
-
-vt100clr
-	db	ESC,'[2J',ESC,'[H',EOL
-
-mmenutxt
-	db	5
-	db	'S Send       ',EOL
-	db	'R Recieve    ',EOL
-	db	'O Options    ',EOL
-	db	'E Exit Menu  ',EOL
-	db	'Q Quit YaTerm',EOL
-
-omenutxt
-	db	3
-	db	'Chr Delay  20',EOL
-	db	'Ln Delay   50',EOL
-	db	'E Exit Menu  ',EOL
-
-debugtxt
-	db	'Made it here...',CR,LF,EOL
-
-; -------------OTHER VARIABLES-----------------
-
-; state machine var
-STATE	db	0
-
-; menu w/h value
-MENUWH	db	0,0
-
-; menu x/y value
-MENUXY	db	0,0
-
-; delay ms
-delayms	db	50,100
-; ---------------BUFFER SPACE------------------
-
-STRBUF	ds	STDINSZ+2
-ARGS	ds	32
+welcome db	'YATERM 1.1',CR,LF,'Patrick Jackson'
+	db	CR,LF,'Ctrl-O for Options',CR,LF,'$'
+sfltxt	db	'File to send: ','$'
+rfltxt	db	'File to receive: ','$'
+opennokmsg
+	db	'File not found!','$'
+flnerrmsg
+	db	'Filename too long!','$'
+clrmsg	db	ESC,'[2J',ESC,'[H','$'
+menumsg
+	db	ESC,'[5;33H'
+	db	201,205,205,205,205,205,205,205,205,205,205,205,205,205,187
+	db	ESC,'[6;33H'
+	db	186,'S Send...    ',186,CR,LF
+	db	ESC,'[7;33H'
+	db	204,205,205,205,205,205,205,205,205,205,205,205,205,205,185
+	db	ESC,'[8;33H'
+	db	186,'R Recieve... ',186,CR,LF
+        db	ESC,'[9;33H'
+	db	204,205,205,205,205,205,205,205,205,205,205,205,205,205,185
+	db	ESC,'[10;33H'
+	db	186,'O Options... ',186,CR,LF
+        db	ESC,'[11;33H'
+	db	204,205,205,205,205,205,205,205,205,205,205,205,205,205,185
+	db	ESC,'[12;33H'
+	db	186,'E Exit Menu  ',186,CR,LF
+        db	ESC,'[13;33H'
+	db	204,205,205,205,205,205,205,205,205,205,205,205,205,205,185
+        db	ESC,'[14;33H'
+	db	186,'Q Quit YaTerm',186,CR,LF
+	db	ESC,'[15;33H'
+	db	200,205,205,205,205,205,205,205,205,205,205,205,205,205,188
+mmend	db	ESC,'[16;33H'
+	db	'$'
+	
+	; To change numbers, hit character
+	; then do (+) or (-) to change value
+	; then do itoa
+omenumsg
+	db	ESC,'[6;33H'
+	db	201,205,205,205,205,205,205,205,205,205,205,205,205,205,187
+	db	ESC,'[7;33H'
+	db	186,'Chr Delay  20',186,CR,LF
+	db	ESC,'[8;33H'
+	db	204,205,205,205,205,205,205,205,205,205,205,205,205,205,185
+	db	ESC,'[9;33H'
+	db	186,'Ln  Delay  50',186,CR,LF
+        db	ESC,'[10;33H'
+	db	204,205,205,205,205,205,205,205,205,205,205,205,205,205,185
+	db	ESC,'[11;33H'
+	db	186,'E Exit Menu  ',186,CR,LF
+        db	ESC,'[12;33H'
+	db	200,205,205,205,205,205,205,205,205,205,205,205,205,205,188
+omend	db	ESC,'[13;33H'
+	db	'$'
+nline	db	CR,LF,'$'
+inbuf	ds	IBUFLEN+2
+delays	db	20,50
+args	ds	32
 OLDSP	ds	2
-	ds	128
+	ds	64
 STKTOP
-HEAPSTRT
