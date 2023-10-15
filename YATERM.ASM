@@ -249,8 +249,6 @@ mmenuprs
 	push	psw
 	cz	sendfile
 	pop	psw
-	call	getchar
-	rz
 	cpi	'E'
 	jnz	mmnuprsn
 	call	clrscrn
@@ -279,16 +277,14 @@ sendfile
 
 	cpi	255		; check if opened correctly
 	push	psw
-	cz	openntok	; if failed, show error then exit out
+	cnz	openok		; if successful, go here
 	pop	psw
-	rz
-	
-	call	openok		; if successful, go here
-	call	printdbg
-	ret
+	push	psw
+	cnz	sendfcb		; send file over serial
+	pop	psw
+	rnz
 
-	call	sendfcb		; send file over serial
-
+	call	openntok	; if failed, show error then exit out
 	ret
 
 ; initfcb
@@ -364,7 +360,7 @@ freadl	lxi	d,FCB
 	lxi	h,BUFF
 breadl	mov	a,m
 	mov	b,a
-	cpi	1Ah
+	cpi	EOF
 	rz
 	call	sendbyte
 	inx	h
@@ -408,9 +404,10 @@ dly1	dcr	b		; decrement B
 openok	call	newline
 	push	d
 	lxi	d,fileok
-	call	BDOS
+	call	puts
 	pop	d
-	;call	getchar
+	call	newline
+	call	getchar
 	ret
 
 ; openntok
@@ -420,9 +417,10 @@ openntok
 	call	newline
 	push	d
 	lxi	d,ffopntxt
-	call	BDOS
+	call	puts
 	pop	d
-	;call	getchar
+	call	newline
+	call	getchar
 	ret
 
 ; setendch
@@ -447,13 +445,13 @@ setendch
 
 open	xra	a
 	sta	FCBCR
-	push	b
-	push	d
+	;push	b
+	;push	d
 	lxi	d,FCB
 	mvi	c,OPENF
 	call	BDOS
-	pop	d
-	pop	b
+	;pop	d
+	;pop	b
 	ret
 
 ; ------------YATERM I/O ROUTINES--------------
@@ -478,19 +476,19 @@ ttyin	in	TTYIO
 	call	ttypars
 	ret
 
-; ttyparse
-; Parses the incoming TTYIO byte in A
-
-ttypars	cpi	CTRLO
-	cz	STATE1
-	ret
-
 ; crtin
 ; Pulls in byte from CRTIO and outputs to TTYIO
 ; Returns byte to A
 
 crtin	in	CRTIO
 	out	TTYIO
+	ret
+
+; ttyparse
+; Parses the incoming TTYIO byte in A
+
+ttypars	cpi	CTRLO
+	cz	STATE1
 	ret
 
 ; crtparse
@@ -638,7 +636,7 @@ memset	push	h
 	mov	m,a		; load accumulator into hl location
 	inx	h		; increment hl
 	dcr	c		; decrement counter
-	jnz	memset		; if not zero, loop
+	jnz	memset + 2	; if not zero, loop
 	pop	b
 	pop	h
 	ret                     ; return from subroutine
@@ -696,6 +694,8 @@ MENUXY	db	0,0
 
 ; delay ms
 delayms	db	50,100
+
+; move up top to equates yo, do better
 ; ---------------BUFFER SPACE------------------
 
 STRBUF	ds	STDINSZ+2
