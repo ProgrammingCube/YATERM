@@ -277,14 +277,13 @@ sendfile
 
 	cpi	255		; check if opened correctly
 	push	psw
-	cnz	openok		; if successful, go here
+	cz	openntok	; if 0, then failed to open file
 	pop	psw
-	push	psw
-	cnz	sendfcb		; send file over serial
-	pop	psw
-	rnz
-
-	call	openntok	; if failed, show error then exit out
+	rz			; return if failed file open
+	
+	call	openok		; file found!
+	call	sendfcb		; send file
+	
 	ret
 
 ; initfcb
@@ -351,6 +350,7 @@ openfcb	call	open
 sendfcb	
 freadl	lxi	d,FCB
 	mvi	c,READF
+	call	BDOS
 	cpi	0
 	push	psw
 	cnz	freaderr
@@ -388,6 +388,8 @@ bytein	in	CRTIO		; read in byte
 	ret
 
 freaderr
+	lxi	d,frerrtxt
+	call	puts
 	ret			; do nothing on error, return
 
 delay	mvi	b,MSCNT		; set B to MSCNT
@@ -658,6 +660,9 @@ fileok
 
 ffopntxt
 	db	'File not found!',EOL
+
+frerrtxt
+	db	'File read error!',EOL
 
 nltxt	db	CR,LF,EOL
 

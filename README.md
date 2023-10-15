@@ -4,8 +4,11 @@ YATERM is a homebrew terminal application written in 8080 assembly from scratch,
 ## YATERM V2.0
 This version of YATERM is completely rewritten from scratch, using my 2 years of experience since starting the first version.
 
-
 #### Important!
-As of now, FILE SENDING DOES NOT WORK. I REPEAT, IN 2.0, FILE SENDING DOES NOT WORK. For reasons unknown, the stack gets absolutely smacked in my file open routines which I have copied from the old version. Also, the actual file sending code sends nothing but absolute garbage instead of the file chunks, so I have no idea what's going on there.
+File sending works...mostly!
+The first character doesn't show on the screen (yet).
 
-If you want to send files, go to the FROZEN branch.
+
+##### Bugs
+- Upon exit and restart, the altair terminal screen no longer seems to respond to the connected computer
+- Menu behavior may not be ideal quite yet (pauses/no pauses where there shouldn't be)
